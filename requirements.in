@@ -1,0 +1,16 @@
+Django
+djangorestframework
+python-dotenv
+django-cors-headers
+drf-yasg
+gunicorn
+pillow
+python-decouple
+whitenoise
+psycopg2-binary
+celery
+redis
+
+djangorestframework-simplejwt
+
+
