@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database files
+*.sqlite3
+*.db
+
+# Environment variables
+
+.env.local
+.env
+
+# Node.js (if applicable)
+node_modules/
+npm-debug.log*
+
+# Misc
+*.bak
+*.swp
+*.swo
+.idea/
