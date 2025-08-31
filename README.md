@@ -52,7 +52,11 @@ ktl_isp_billing/
 3. **Install Dependencies**:
    Install the required packages:
    ```bash
-   pip install djangorestframework djangorestframework-simplejwt django-cors-headers drf-yasg django-filter django-extensions django-debug-toolbar
+   pip install pip-tools
+   ```
+   then run
+   ```bash
+   pip-compile
    ```
    Or, if a `requirements.txt` file exists:
    ```bash
@@ -70,7 +74,7 @@ To create a new Django app (e.g., `new_app`) inside the `apps/` directory:
    ```
 
 2. **Run the `startapp` Command**:
-   Create the app in the `apps/` directory:
+   Create the app folder in the `apps/` directory:
    ```bash
    python manage.py startapp new_app apps/new_app
    ```

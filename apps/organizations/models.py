@@ -20,5 +20,13 @@ class Organization(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        # db_table = 'Organization'
+        verbose_name = 'Organization'
+        verbose_name_plural = 'Organizations'
+
     def __str__(self):
-        return self.company_name
+        return f"{self.company_name} ({self.company_code})"
+      
+
+   
