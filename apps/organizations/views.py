@@ -165,6 +165,40 @@ class OrganizationDetailView(APIView):
       
     )
 
+
+    def patch(self, request, pk):
+        if not IsSuperAdminOrAdmin().has_permission(request, self):
+            raise PermissionDenied(detail="Only superadmin or admin can update organizations.")
+        try:
+            organization = Organization.objects.get(pk=pk)
+            serializer = OrganizationSerializer(organization, data=request.data, partial=True)
+            if serializer.is_valid():
+                updated_organization = serializer.save()
+                response_data = {
+                    'success': True,
+                    'status': status.HTTP_200_OK,
+                    'message': 'Organization updated successfully.',
+                    'data': OrganizationSerializer(updated_organization).data
+                }
+                return Response(response_data)
+            response_data = {
+                'success': False,
+                'status': status.HTTP_400_BAD_REQUEST,
+                'message': 'Failed to update organization.',
+                'error': serializer.errors
+            }
+            return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+        except Organization.DoesNotExist:
+            response_data = {
+                'success': False,
+                'status': status.HTTP_404_NOT_FOUND,
+                'message': 'Organization not found.',
+                'error': {}
+            }
+            return Response(response_data, status=status.HTTP_404_NOT_FOUND)
+
+            
+
     def delete(self, request, pk):
         if not IsSuperAdminOrAdmin().has_permission(request, self):
             raise PermissionDenied(detail="Only superadmin or admin can delete organizations.")
