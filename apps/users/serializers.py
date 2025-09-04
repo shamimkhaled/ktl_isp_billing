@@ -116,7 +116,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'login_id', 'email', 'password', 'password_confirm', 'first_name', 'last_name',
+            'login_id', 'email', 'password', 'password_confirm', 
             'mobile', 'user_type', 'employee_id', 'name', 'designation', 'department', 
             'salary', 'date_of_joining', 'address', 'contact_person_name', 'contact_person_phone',
             'district', 'thana', 'postal_code', 'remarks', 'roles'
