@@ -5,7 +5,7 @@ from apps.common.models import TimestampedModel
 
 class Organization(TimestampedModel):
     company_name = models.CharField(max_length=255, default='Kloud Technologies Ltd')
-    company_code = models.CharField(max_length=20, unique=True, default='KTL')
+    company_code = models.CharField(max_length=20, unique=True, default='KTL', db_index=True)
     business_license = models.CharField(max_length=100, blank=True, null=True)
     vat_registration = models.CharField(max_length=100, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
