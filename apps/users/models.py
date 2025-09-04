@@ -49,7 +49,9 @@ class CustomUserManager(DjangoUserManager):
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
         
-        return self._create_user(login_id, email, password, 'super_admin', **extra_fields)
+        # Extract user_type from extra_fields to avoid duplicate parameter
+        user_type = extra_fields.pop('user_type', 'super_admin')
+        return self._create_user(login_id, email, password, user_type, **extra_fields)
 
 
 class Department(TimestampedModel):

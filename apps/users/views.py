@@ -359,3 +359,5 @@ def bulk_role_assignment(request):
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        

@@ -90,7 +90,7 @@ class UserRoleSerializer(serializers.ModelSerializer):
     """Serializer for UserRole model"""
     
     role_name = serializers.CharField(source='role.display_name', read_only=True)
-    assigned_by_name = serializers.CharField(source='assigned_by.full_name', read_only=True)
+    assigned_by_name = serializers.CharField(source='assigned_by.name', read_only=True)
     
     class Meta:
         model = UserRole
@@ -153,7 +153,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     """Serializer for User model (read/update)"""
     
-    full_name = serializers.ReadOnlyField()
+    # full_name = serializers.ReadOnlyField()
     roles = UserRoleSerializer(source='user_roles', many=True, read_only=True)
     permissions = serializers.SerializerMethodField()
     district_info = DistrictSerializer(source='district', read_only=True)
@@ -162,7 +162,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'login_id', 'email', 'first_name', 'last_name', 'full_name', 'name',
+            'id', 'login_id', 'email',  'name',
             'mobile', 'user_type', 'employee_id', 'designation', 'department',
             'salary', 'date_of_joining', 'address', 'contact_person_name', 'contact_person_phone',
             'district', 'district_info', 'thana', 'thana_info', 'postal_code', 'remarks',
@@ -170,6 +170,7 @@ class UserSerializer(serializers.ModelSerializer):
             'profile_photo', 'language_preference', 'timezone', 'roles', 'permissions',
             'last_login', 'date_joined', 'created_at', 'updated_at'
         ]
+        
         read_only_fields = [
             'id', 'login_id', 'last_login', 'date_joined', 'created_at', 'updated_at'
         ]
@@ -185,7 +186,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'first_name', 'last_name', 'name', 'mobile', 'employee_id', 'designation',
+            'name', 'mobile', 'employee_id', 'designation',
             'department', 'salary', 'date_of_joining', 'address', 'contact_person_name', 
             'contact_person_phone', 'district', 'thana', 'postal_code', 'remarks',
             'profile_photo', 'language_preference', 'timezone'

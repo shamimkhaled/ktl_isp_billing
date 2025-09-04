@@ -24,15 +24,15 @@ class UserRoleInline(admin.TabularInline):
 class UserAdmin(BaseUserAdmin):
     """Custom User Admin with role management"""
     
-    list_display = ('login_id', 'email', 'first_name', 'last_name', 'user_type', 'is_active', 'is_staff', 'get_roles')
+    list_display = ('login_id', 'email', 'name', 'user_type', 'is_active', 'is_staff', 'get_roles')
     list_filter = ('user_type', 'is_active', 'is_staff', 'is_superuser', 'user_roles__role')
-    search_fields = ('login_id', 'email', 'first_name', 'last_name', 'employee_id')
+    search_fields = ('login_id', 'email', 'name', 'employee_id')
     ordering = ('login_id',)
     
     fieldsets = (
         (None, {'fields': ('login_id', 'password')}),
         ('Personal info', {
-            'fields': ('first_name', 'last_name', 'email', 'phone', 'employee_id', 'designation', 'department')
+            'fields': ('name', 'email', 'mobile', 'employee_id', 'designation', 'department')
         }),
         ('Account Type', {
             'fields': ('user_type',)
@@ -65,7 +65,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': ('login_id', 'email', 'user_type', 'password1', 'password2'),
         }),
         ('Personal info', {
-            'fields': ('first_name', 'last_name', 'phone'),
+            'fields': ('name', 'mobile'),
         }),
     )
     
