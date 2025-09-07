@@ -5,7 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import User, Role, UserRole, PermissionCategory, CustomPermission
+from .models import User, Role, UserRole, PermissionCategory, CustomPermission, Department, Designation
 
 
 class UserRoleInline(admin.TabularInline):
@@ -19,6 +19,8 @@ class UserRoleInline(admin.TabularInline):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('role', 'assigned_by')
 
+
+admin.site.register([Department, Designation])
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -82,6 +84,30 @@ class UserAdmin(BaseUserAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).prefetch_related('user_roles__role')
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can add users"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change users"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete users"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 class UserRoleInlineForRole(admin.TabularInline):
@@ -153,6 +179,30 @@ class RoleAdmin(admin.ModelAdmin):
             group, created = Group.objects.get_or_create(name=obj.name)
             obj.django_group = group
             obj.save()
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can add roles"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change roles"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete roles"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 @admin.register(UserRole)
@@ -181,6 +231,30 @@ class UserRoleAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('user', 'role', 'assigned_by', 'revoked_by')
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can assign roles"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change role assignments"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete role assignments"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 @admin.register(PermissionCategory)
@@ -197,13 +271,37 @@ class PermissionCategoryAdmin(admin.ModelAdmin):
         count = obj.custom_permissions.count()
         return f'{count} permissions'
     get_permissions_count.short_description = 'Custom Permissions'
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can add permission categories"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change permission categories"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete permission categories"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 @admin.register(CustomPermission)
 class CustomPermissionAdmin(admin.ModelAdmin):
     """Custom Permission Admin"""
     
-    list_display = ('name', 'codename', 'category', 'is_active', 'is_system_permission', 'get_django_permission')
+    list_display = ('name', 'codename', 'category', 'is_active', 'is_system_permission', 'get_django_permission_link')
     list_filter = ('is_active', 'is_system_permission', 'category')
     search_fields = ('name', 'codename', 'description')
     
@@ -215,20 +313,65 @@ class CustomPermissionAdmin(admin.ModelAdmin):
             'fields': ('is_active', 'is_system_permission')
         }),
         ('Django Integration', {
-            'fields': ('django_permission',),
+            'fields': ('get_django_permission_info',),
             'classes': ('collapse',)
         }),
     )
     
-    readonly_fields = ('django_permission',)
+    readonly_fields = ('get_django_permission_info',)
     
-    def get_django_permission(self, obj):
+    def get_django_permission_link(self, obj):
         """Display Django permission link"""
         if obj.django_permission:
-            url = reverse('admin:auth_permission_change', args=[obj.django_permission.id])
-            return format_html('<a href="{}">View Django Permission</a>', url)
+            try:
+                # Try to reverse the URL - if it fails, show basic info
+                url = reverse('admin:auth_permission_change', args=[obj.django_permission.id])
+                return format_html('<a href="{}">View Django Permission</a>', url)
+            except:
+                # If URL reverse fails, just show the permission info
+                return format_html('Permission: {} (ID: {})', obj.django_permission.name, obj.django_permission.id)
         return 'Not created'
-    get_django_permission.short_description = 'Django Permission'
+    get_django_permission_link.short_description = 'Django Permission'
+    
+    def get_django_permission_info(self, obj):
+        """Display Django permission information"""
+        if obj.django_permission:
+            return format_html(
+                '<strong>Name:</strong> {}<br>'
+                '<strong>Codename:</strong> {}<br>'
+                '<strong>Content Type:</strong> {}<br>'
+                '<strong>ID:</strong> {}',
+                obj.django_permission.name,
+                obj.django_permission.codename,
+                obj.django_permission.content_type,
+                obj.django_permission.id
+            )
+        return 'Django permission not created yet'
+    get_django_permission_info.short_description = 'Django Permission Details'
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can add custom permissions"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change custom permissions"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete custom permissions"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 # Customize Django's Group admin to show related Role
@@ -258,6 +401,30 @@ class GroupAdmin(admin.ModelAdmin):
         """Display users count"""
         return obj.user_set.count()
     get_users_count.short_description = 'Users'
+    
+    def has_add_permission(self, request):
+        """Only super_admin and admin can add groups"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_change_permission(self, request, obj=None):
+        """Only super_admin and admin can change groups"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin']
+    
+    def has_delete_permission(self, request, obj=None):
+        """Only super_admin can delete groups"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type == 'super_admin'
+    
+    def has_view_permission(self, request, obj=None):
+        """Allow viewing for super_admin, admin, and billing_manager"""
+        if request.user.is_superuser:
+            return True
+        return request.user.user_type in ['super_admin', 'admin', 'billing_manager']
 
 
 # Unregister the default Group admin and register our custom one
