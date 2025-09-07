@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  web:
+    environment:
+      - DJANGO_DEBUG=False
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    restart: always
+
+  db:
+    environment:
+      POSTGRES_DB: ${DB_NAME:-ktl_isp_db_prod}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data/
+    restart: always
+
+  redis:
+    restart: always
+
+  celery:
+    environment:
+      - DJANGO_DEBUG=False
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    restart: always
+
+  celery-beat:
+    environment:
+      - DJANGO_DEBUG=False
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+    restart: always
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+    depends_on:
+      - web
+    restart: always
+
+volumes:
+  postgres_prod_data:
