@@ -22,12 +22,11 @@ RUN apt-get update \
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entrypoint script
-COPY entrypoint.sh /app/
-RUN chmod +x /app/entrypoint.sh
-
 # Copy project
 COPY . /app/
+
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
 
 # Create logs directory
 RUN mkdir -p /app/logs
