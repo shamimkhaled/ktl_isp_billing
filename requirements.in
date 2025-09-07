@@ -10,7 +10,9 @@ whitenoise
 psycopg2-binary
 celery
 redis
-
 djangorestframework-simplejwt
-
-
+django-filter 
+django-extensions
+django-debug-toolbar
+django-phonenumber-field 
+phonenumbers
