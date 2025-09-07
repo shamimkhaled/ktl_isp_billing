@@ -29,6 +29,8 @@ class CustomUserManager(DjangoUserManager):
         if not login_id:
             raise ValueError('The given login_id must be set')
         email = self.normalize_email(email)
+        # Ensure username is set to login_id to satisfy AbstractUser requirements
+        extra_fields.setdefault('username', login_id)
         user = self.model(login_id=login_id, email=email, user_type=user_type, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -186,10 +188,16 @@ class User(AbstractUser, TimestampedModel):
     
     def __str__(self):
         return f"{self.name or self.get_full_name()} ({self.login_id})"
-    
+
+    def save(self, *args, **kwargs):
+        # Ensure username is set to login_id to satisfy AbstractUser requirements
+        if not self.username and self.login_id:
+            self.username = self.login_id
+        super().save(*args, **kwargs)
+
     @property
     def full_name(self):
-        return self.name 
+        return self.name
     
     def has_role(self, role_name):
         """Check if user has a specific role"""
