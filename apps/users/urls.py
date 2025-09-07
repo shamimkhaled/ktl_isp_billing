@@ -5,12 +5,18 @@ from . import views
 app_name = 'users'
 
 urlpatterns = [
-    # User Management
+    # Authentication endpoints
+    path('auth/login/', views.LoginView.as_view(), name='auth-login'),
+    path('auth/refresh/', views.TokenRefreshView.as_view(), name='auth-refresh'),
+    path('auth/logout/', views.LogoutView.as_view(), name='auth-logout'),
+    path('auth/verify/', views.VerifyTokenView.as_view(), name='auth-verify'),
+    
+    # User Management (Consolidated)
     path('users/', views.UserListCreateView.as_view(), name='user-list-create'),
     path('users/<uuid:pk>/', views.UserDetailView.as_view(), name='user-detail'),
-    path('users/profile/', views.user_profile, name='user-profile'),
-    path('users/permissions/', views.user_permissions, name='user-permissions'),
-    path('users/change-password/', views.ChangePasswordView.as_view(), name='change-password'),
+    path('users/profile/', views.user_profile, name='user-profile'),  # Current user profile
+    path('users/permissions/', views.user_permissions, name='user-permissions'),  # Current user permissions
+    path('users/change-password/', views.ChangePasswordView.as_view(), name='change-password'),  # Current user password change
     
     # Role Management
     path('roles/', views.RoleListCreateView.as_view(), name='role-list-create'),

@@ -2,6 +2,10 @@ from rest_framework import serializers
 from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth import authenticate
+from django.utils import timezone
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from .models import User, Role, UserRole, PermissionCategory, CustomPermission
 from apps.common.models import District, Thana
 from apps.common.serializers import DistrictSerializer, ThanaSerializer
@@ -168,7 +172,7 @@ class UserSerializer(serializers.ModelSerializer):
             'district', 'district_info', 'thana', 'thana_info', 'postal_code', 'remarks',
             'is_active', 'is_staff', 'is_email_verified', 'is_phone_verified',
             'profile_photo', 'language_preference', 'timezone', 'roles', 'permissions',
-            'last_login', 'date_joined', 'created_at', 'updated_at'
+            'last_login', 'date_joined', 'access_token', 'refresh_token', 'created_at', 'updated_at'
         ]
         
         read_only_fields = [
@@ -318,3 +322,179 @@ class CustomPermissionSerializer(serializers.ModelSerializer):
         if CustomPermission.objects.filter(codename=value).exists():
             raise serializers.ValidationError("A permission with this codename already exists.")
         return value
+
+
+# Authentication Serializers
+
+class LoginSerializer(serializers.Serializer):
+    """Serializer for user login with JWT token generation"""
+    
+    login_id = serializers.CharField(max_length=150)
+    password = serializers.CharField(write_only=True)
+    remember_me = serializers.BooleanField(default=False)
+    
+    def validate(self, attrs):
+        """Validate login credentials and return user with tokens"""
+        login_id = attrs.get('login_id')
+        password = attrs.get('password')
+        remember_me = attrs.get('remember_me', False)
+        
+        if not login_id or not password:
+            raise serializers.ValidationError('Both login_id and password are required.')
+        
+        # Authenticate user
+        user = authenticate(request=self.context.get('request'), login_id=login_id, password=password)
+        
+        if not user:
+            raise serializers.ValidationError('Invalid login credentials.')
+        
+        if not user.is_active:
+            raise serializers.ValidationError('User account is disabled.')
+        
+        # Check if account is locked
+        if user.locked_until and user.locked_until > timezone.now():
+            raise serializers.ValidationError(
+                f'Account is locked until {user.locked_until.strftime("%Y-%m-%d %H:%M:%S")}.'
+            )
+        
+        # Reset failed login attempts on successful login
+        if user.failed_login_attempts > 0:
+            user.failed_login_attempts = 0
+            user.locked_until = None
+            user.save(update_fields=['failed_login_attempts', 'locked_until'])
+        
+        # Generate JWT tokens
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        
+        # Set token expiration based on remember_me
+        if remember_me:
+            # Extend refresh token lifetime for remember_me (30 days)
+            refresh.set_exp(lifetime=timezone.timedelta(days=30))
+            refresh_token = str(refresh)
+        
+        # Store tokens in user model for lifetime login
+        token_expires_at = timezone.now() + timezone.timedelta(hours=1)  # Access token expires in 1 hour
+        user.set_tokens(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=token_expires_at,
+            remember_me=remember_me
+        )
+        
+        # Update last login
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        
+        attrs['user'] = user
+        attrs['access_token'] = access_token
+        attrs['refresh_token'] = refresh_token
+        
+        return attrs
+
+
+class TokenRefreshSerializer(serializers.Serializer):
+    """Serializer for refreshing JWT tokens"""
+    
+    refresh_token = serializers.CharField()
+    
+    def validate(self, attrs):
+        """Validate refresh token and generate new access token"""
+        refresh_token = attrs.get('refresh_token')
+        
+        try:
+            # Validate refresh token
+            refresh = RefreshToken(refresh_token)
+            user_id = refresh.payload.get('user_id')
+            
+            # Get user
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                raise serializers.ValidationError('User not found.')
+            
+            if not user.is_active:
+                raise serializers.ValidationError('User account is disabled.')
+            
+            # Check if stored refresh token matches
+            if user.refresh_token != refresh_token:
+                raise serializers.ValidationError('Invalid refresh token.')
+            
+            # Generate new access token
+            new_refresh = RefreshToken.for_user(user)
+            new_access_token = str(new_refresh.access_token)
+            new_refresh_token = str(new_refresh)
+            
+            # Update stored tokens
+            token_expires_at = timezone.now() + timezone.timedelta(hours=1)
+            user.set_tokens(
+                access_token=new_access_token,
+                refresh_token=new_refresh_token,
+                expires_at=token_expires_at,
+                remember_me=user.remember_me
+            )
+            
+            attrs['user'] = user
+            attrs['access_token'] = new_access_token
+            attrs['refresh_token'] = new_refresh_token
+            
+            return attrs
+            
+        except TokenError as e:
+            raise serializers.ValidationError('Invalid or expired refresh token.')
+
+
+class LogoutSerializer(serializers.Serializer):
+    """Serializer for user logout"""
+    
+    refresh_token = serializers.CharField(required=False)
+    logout_all_devices = serializers.BooleanField(default=False)
+    
+    def validate(self, attrs):
+        """Validate logout request"""
+        user = self.context['request'].user
+        refresh_token = attrs.get('refresh_token')
+        logout_all_devices = attrs.get('logout_all_devices', False)
+        
+        if logout_all_devices:
+            # Clear all tokens for the user
+            user.clear_tokens()
+        else:
+            # Blacklist specific refresh token if provided
+            if refresh_token:
+                try:
+                    token = RefreshToken(refresh_token)
+                    token.blacklist()
+                except TokenError:
+                    pass  # Token already invalid/blacklisted
+            
+            # Clear stored tokens
+            user.clear_tokens()
+        
+        attrs['user'] = user
+        return attrs
+
+
+class UserLoginResponseSerializer(serializers.ModelSerializer):
+    """Serializer for user login response data"""
+    
+    roles = UserRoleSerializer(source='user_roles', many=True, read_only=True)
+    permissions = serializers.SerializerMethodField()
+    district_info = DistrictSerializer(source='district', read_only=True)
+    thana_info = ThanaSerializer(source='thana', read_only=True)
+    
+    class Meta:
+        model = User
+        fields = [
+            'id', 'login_id', 'email', 'name', 'mobile', 'user_type',
+            'employee_id', 'designation', 'department', 'district_info', 'thana_info',
+            'is_active', 'is_staff', 'is_superuser', 'is_email_verified', 'is_phone_verified',
+            'is_first_login', 'profile_photo', 'language_preference', 'timezone',
+            'roles', 'permissions', 'last_login', 'date_joined'
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined']
+    
+    def get_permissions(self, obj):
+        """Get all user permissions"""
+        return obj.get_all_permissions()

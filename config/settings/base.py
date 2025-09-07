@@ -153,6 +153,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 
+# Authentication Backends
+AUTHENTICATION_BACKENDS = [
+    'apps.users.authentication.LoginIdBackend',  # Custom backend for login_id
+    'django.contrib.auth.backends.ModelBackend',  # Default Django backend
+]
+
 
 
 

@@ -7,12 +7,16 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 from .models import User, Role, UserRole, PermissionCategory, CustomPermission
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     RoleSerializer, UserRoleSerializer, PasswordChangeSerializer,
     RoleAssignmentSerializer, PermissionSerializer, GroupSerializer,
-    PermissionCategorySerializer, CustomPermissionSerializer
+    PermissionCategorySerializer, CustomPermissionSerializer,
+    LoginSerializer, TokenRefreshSerializer, LogoutSerializer, UserLoginResponseSerializer
 )
 
 
@@ -78,8 +82,18 @@ class ChangePasswordView(APIView):
         serializer = PasswordChangeSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            return Response({'message': 'Password changed successfully'}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'success': True,
+                'status': 200,
+                'message': 'Password changed successfully',
+                'data': []
+            }, status=status.HTTP_200_OK)
+        return Response({
+            'success': False,
+            'status': 400,
+            'message': 'Password change failed',
+            'error': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class RoleListCreateView(generics.ListCreateAPIView):
@@ -250,7 +264,12 @@ def user_profile(request):
     GET /api/users/profile/ - Get current user details
     """
     serializer = UserSerializer(request.user)
-    return Response(serializer.data)
+    return Response({
+        'success': True,
+        'status': 200,
+        'message': 'User profile retrieved successfully',
+        'data': serializer.data
+    })
 
 
 @api_view(['GET'])
@@ -273,10 +292,15 @@ def user_permissions(request):
         grouped_permissions[app_label].append(perm)
     
     return Response({
-        'user': user.login_id,
-        'permissions': permissions,
-        'grouped_permissions': grouped_permissions,
-        'roles': [ur.role.name for ur in user.user_roles.filter(is_active=True)]
+        'success': True,
+        'status': 200,
+        'message': 'User permissions retrieved successfully',
+        'data': {
+            'user': user.login_id,
+            'permissions': permissions,
+            'grouped_permissions': grouped_permissions,
+            'roles': [ur.role.name for ur in user.user_roles.filter(is_active=True)]
+        }
     })
 
 
@@ -359,5 +383,298 @@ def bulk_role_assignment(request):
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# Authentication Views
+
+class LoginView(APIView):
+    """
+    User login with JWT token generation for all user types (user/admin/staff)
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    @swagger_auto_schema(
+        operation_description="Login with login_id/password and get JWT tokens",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['login_id', 'password'],
+            properties={
+                'login_id': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='User login ID or email'
+                ),
+                'password': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='User password'
+                ),
+                'remember_me': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Enable lifetime login (extends refresh token)',
+                    default=False
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Login successful",
+                examples={
+                    "application/json": {
+                        "message": "Login successful",
+                        "user": {
+                            "id": "uuid",
+                            "login_id": "admin001",
+                            "email": "admin@example.com",
+                            "name": "Admin User",
+                            "user_type": "admin",
+                            "roles": [],
+                            "permissions": []
+                        },
+                        "tokens": {
+                            "access": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+                            "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+                            "token_type": "Bearer"
+                        },
+                        "remember_me": False,
+                        "expires_at": "2024-01-01T12:00:00Z"
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Login failed",
+                examples={
+                    "application/json": {
+                        "message": "Login failed",
+                        "errors": {
+                            "non_field_errors": ["Invalid login credentials."]
+                        }
+                    }
+                }
+            )
+        },
+        tags=['Authentication']
+    )
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            access_token = serializer.validated_data['access_token']
+            refresh_token = serializer.validated_data['refresh_token']
+            
+            # Serialize user data
+            user_serializer = UserLoginResponseSerializer(user)
+            
+            return Response({
+                'success': True,
+                'status': 200,
+                'message': 'Login successful',
+                'data': {
+                    'user': user_serializer.data,
+                    'tokens': {
+                        'access': access_token,
+                        'refresh': refresh_token,
+                        'token_type': 'Bearer'
+                    },
+                    'remember_me': user.remember_me,
+                    'expires_at': user.token_expires_at.isoformat() if user.token_expires_at else None
+                }
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'success': False,
+            'status': 400,
+            'message': 'Login failed',
+            'error': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TokenRefreshView(APIView):
+    """
+    Refresh JWT access token using refresh token
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    @swagger_auto_schema(
+        operation_description="Refresh access token using refresh token",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['refresh_token'],
+            properties={
+                'refresh_token': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Valid refresh token'
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Token refreshed successfully",
+                examples={
+                    "application/json": {
+                        "message": "Token refreshed successfully",
+                        "tokens": {
+                            "access": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+                            "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+                            "token_type": "Bearer"
+                        },
+                        "expires_at": "2024-01-01T12:00:00Z"
+                    }
+                }
+            ),
+            400: openapi.Response(
+                description="Token refresh failed",
+                examples={
+                    "application/json": {
+                        "message": "Token refresh failed",
+                        "errors": {
+                            "non_field_errors": ["Invalid or expired refresh token."]
+                        }
+                    }
+                }
+            )
+        },
+        tags=['Authentication']
+    )
+    def post(self, request):
+        serializer = TokenRefreshSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            access_token = serializer.validated_data['access_token']
+            refresh_token = serializer.validated_data['refresh_token']
+            
+            return Response({
+                'success': True,
+                'status': 200,
+                'message': 'Token refreshed successfully',
+                'data': {
+                    'tokens': {
+                        'access': access_token,
+                        'refresh': refresh_token,
+                        'token_type': 'Bearer'
+                    },
+                    'expires_at': user.token_expires_at.isoformat() if user.token_expires_at else None
+                }
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'success': False,
+            'status': 400,
+            'message': 'Token refresh failed',
+            'error': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LogoutView(APIView):
+    """
+    User logout with token blacklisting
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Logout user and blacklist tokens",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'refresh_token': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Refresh token to blacklist (optional)'
+                ),
+                'logout_all_devices': openapi.Schema(
+                    type=openapi.TYPE_BOOLEAN,
+                    description='Logout from all devices',
+                    default=False
+                ),
+            }
+        ),
+        responses={
+            200: openapi.Response(
+                description="Logout successful",
+                examples={
+                    "application/json": {
+                        "message": "Logout successful"
+                    }
+                }
+            )
+        },
+        tags=['Authentication']
+    )
+    def post(self, request):
+        serializer = LogoutSerializer(data=request.data, context={'request': request})
+        
+        if serializer.is_valid():
+            return Response({
+                'success': True,
+                'status': 200,
+                'message': 'Logout successful',
+                'data': []
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'success': False,
+            'status': 400,
+            'message': 'Logout failed',
+            'error': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VerifyTokenView(APIView):
+    """
+    Verify JWT token validity and get user info
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Verify token validity and get user information",
+        responses={
+            200: openapi.Response(
+                description="Token is valid",
+                examples={
+                    "application/json": {
+                        "message": "Token is valid",
+                        "user": {
+                            "id": "uuid",
+                            "login_id": "admin001",
+                            "email": "admin@example.com",
+                            "name": "Admin User",
+                            "user_type": "admin"
+                        },
+                        "expires_at": "2024-01-01T12:00:00Z"
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Token is invalid or expired",
+                examples={
+                    "application/json": {
+                        "message": "Token is invalid or expired"
+                    }
+                }
+            )
+        },
+        tags=['Authentication']
+    )
+    def post(self, request):
+        user = request.user
+        
+        # Check if user's stored token is still valid
+        if user.is_token_valid():
+            user_serializer = UserLoginResponseSerializer(user)
+            return Response({
+                'success': True,
+                'status': 200,
+                'message': 'Token is valid',
+                'data': {
+                    'user': user_serializer.data,
+                    'expires_at': user.token_expires_at.isoformat() if user.token_expires_at else None
+                }
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'success': False,
+                'status': 401,
+                'message': 'Token is invalid or expired',
+                'error': []
+            }, status=status.HTTP_401_UNAUTHORIZED)
 
         
