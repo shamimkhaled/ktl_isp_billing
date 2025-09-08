@@ -1,0 +1,34 @@
+version: '3.9'
+
+# Override file for local development
+# This file is automatically merged with docker-compose.yml when running docker-compose
+
+services:
+  web:
+    # Override for development - use Django dev server instead of Gunicorn
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - /app/staticfiles  # Named volume override for easier development
+      - /app/media  # Named volume override for easier development
+    environment:
+      - DJANGO_DEBUG=True
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+    ports:
+      - "8000:8000"
+
+  db:
+    ports:
+      - "5432:5432"  # Expose for local database tools
+
+  redis:
+    ports:
+      - "6379:6379"  # Expose for local Redis tools
+
+  # Disable Celery services in development by default
+  # Uncomment if you need Celery in development
+  # celery:
+  #   command: celery -A config worker --loglevel=info --reload
+
+  # celery-beat:
+  #   command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler

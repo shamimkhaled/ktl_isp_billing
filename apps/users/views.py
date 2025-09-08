@@ -11,6 +11,7 @@ from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from .models import User, Role, UserRole, PermissionCategory, CustomPermission
+from .permissions import IsSuperAdminOrAdmin
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     RoleSerializer, UserRoleSerializer, PasswordChangeSerializer,
@@ -23,9 +24,9 @@ from .serializers import (
 class UserListCreateView(generics.ListCreateAPIView):
     """
     List all users or create a new user
-    
-    GET /api/users/ - List users with filtering and search
-    POST /api/users/ - Create new user
+
+    GET /api/users/ - List users with filtering and search (all authenticated users)
+    POST /api/users/ - Create new user (only super admin and admin)
     """
     queryset = User.objects.all()
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -33,12 +34,22 @@ class UserListCreateView(generics.ListCreateAPIView):
     search_fields = ['login_id', 'email', 'first_name', 'last_name', 'employee_id']
     ordering_fields = ['login_id', 'email', 'date_joined', 'last_login']
     ordering = ['-date_joined']
-    
+
+    def get_permissions(self):
+        """
+        Return different permissions based on the request method.
+        GET: All authenticated users can list
+        POST: Only super admin and admin can create
+        """
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated(), IsSuperAdminOrAdmin()]
+        return [permissions.IsAuthenticated()]
+
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return UserCreateSerializer
         return UserSerializer
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
         # Add role filtering
@@ -51,19 +62,29 @@ class UserListCreateView(generics.ListCreateAPIView):
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     Retrieve, update or delete a user
-    
-    GET /api/users/{id}/ - Get user details
-    PUT /api/users/{id}/ - Update user
-    PATCH /api/users/{id}/ - Partial update user
-    DELETE /api/users/{id}/ - Deactivate user (soft delete)
+
+    GET /api/users/{id}/ - Get user details (all authenticated users)
+    PUT /api/users/{id}/ - Update user (only super admin and admin)
+    PATCH /api/users/{id}/ - Partial update user (only super admin and admin)
+    DELETE /api/users/{id}/ - Deactivate user (only super admin and admin)
     """
     queryset = User.objects.all()
-    
+
+    def get_permissions(self):
+        """
+        Return different permissions based on the request method.
+        GET: All authenticated users can retrieve
+        PUT/PATCH/DELETE: Only super admin and admin can modify/delete
+        """
+        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
+            return [permissions.IsAuthenticated(), IsSuperAdminOrAdmin()]
+        return [permissions.IsAuthenticated()]
+
     def get_serializer_class(self):
         if self.request.method in ['PUT', 'PATCH']:
             return UserUpdateSerializer
         return UserSerializer
-    
+
     def perform_destroy(self, instance):
         # Soft delete - deactivate user instead of deleting
         instance.is_active = False

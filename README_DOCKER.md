@@ -15,65 +15,105 @@ This document provides instructions for running the KTL ISP Billing System using
    cd ktl_isp_billing
    ```
 
-2. **Build and start the services**:
+2. **Set up environment variables**:
    ```bash
-   docker-compose up --build
+   cp .env.example .env
+   # Edit .env file with your configuration
    ```
 
-3. **Access the application**:
+3. **Build and start the services**:
+   ```bash
+   # For development
+   docker-compose up --build
+
+   # For production
+   docker-compose -f docker-compose.prod.yml up --build -d
+   ```
+
+4. **Access the application**:
    - Web Application: http://localhost:8000
    - Django Admin: http://localhost:8000/admin
    - API Documentation: http://localhost:8000/swagger/
+   - Health Check: http://localhost:8000/health/
 
-4. **Default Admin Credentials**:
-   - Username: `admin`
-   - Password: `admin123`
+5. **Default Admin Credentials**:
+   - Login ID: `shamimkhaled`
+   - Password: `admin9999`
 
 ## Services
 
 The Docker Compose setup includes the following services:
 
 ### Web Application (`web`)
-- Django application server
+- Django application server with Gunicorn
 - Runs on port 8000
 - Automatically handles database migrations
 - Creates default superuser on first run
+- Health checks enabled
 
 ### Database (`db`)
 - PostgreSQL 15
-- Database name: `ktl_isp_db`
+- Database name: `ktl_isp_db` (dev) / `ktl_isp_db_prod` (prod)
 - Username: `postgres`
-- Password: `postgres`
+- Password: `postgres` (dev) / custom (prod)
 - Port: 5432
+- Health checks enabled
 
 ### Redis (`redis`)
 - Redis 7 (Alpine)
 - Used for caching and Celery message broker
 - Port: 6379
+- Health checks enabled
 
 ### Celery Worker (`celery`)
 - Background task processing
 - Handles asynchronous tasks
+- Configured with proper concurrency
 
 ### Celery Beat (`celery-beat`)
 - Periodic task scheduler
 - Handles scheduled tasks
+- Uses database scheduler
+
+### Nginx (Production only)
+- Reverse proxy and load balancer
+- SSL/TLS termination ready
+- Static/media file serving
+- Security headers configured
 
 ## Environment Variables
 
-The following environment variables are configured in docker-compose.yml:
+Copy `.env.example` to `.env` and configure the following variables:
 
-```yaml
+```bash
+# Django Configuration
+SECRET_KEY=your-secret-key-here
 DJANGO_DEBUG=True
-DJANGO_SECRET_KEY=django-insecure-docker-development-key-change-in-production
+DJANGO_SETTINGS_MODULE=config.settings.development
+
+# Database Configuration
 DB_NAME=ktl_isp_db
 DB_USER=postgres
 DB_PASSWORD=postgres
 DB_HOST=db
 DB_PORT=5432
+DB_SSLMODE=disable
+
+# Redis Configuration
+REDIS_URL=redis://redis:6379/1
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
-REDIS_URL=redis://redis:6379/1
+
+# Email Configuration
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your-email@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=your-email@gmail.com
+
+# Security Settings
+ALLOWED_HOSTS=localhost,127.0.0.1,web
 ```
 
 ## Common Commands
