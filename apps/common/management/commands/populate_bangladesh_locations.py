@@ -183,7 +183,7 @@ class Command(BaseCommand):
                 ]
             },
             'Rajbari': {
-                'code': 'RAJ',
+                'code': 'RJB',
                 'thanas': [
                     'Baliakandi', 'Goalandaghat', 'Pangsha', 'Rajbari Sadar', 'Kalukhali'
                 ]
