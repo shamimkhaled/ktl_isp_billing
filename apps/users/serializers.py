@@ -11,6 +11,13 @@ from apps.common.models import District, Thana
 from apps.common.serializers import DistrictSerializer, ThanaSerializer
 
 
+class PasswordChangeResponseSerializer(serializers.Serializer):
+    success = serializers.BooleanField()
+    status = serializers.IntegerField()
+    message = serializers.CharField()
+    data = serializers.ListField()
+
+
 class PermissionSerializer(serializers.ModelSerializer):
     """Serializer for Django Permission model"""
     

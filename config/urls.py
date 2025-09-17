@@ -9,12 +9,12 @@ from drf_yasg import openapi
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="KTL - ISP Billing Management System REST API",
+        title="KTL ISP Billing API",
         default_version='v1',
-        description="API for KTL - ISP Billing & Management System",
-        terms_of_service="https://www.google.com/policies/terms/",
-        contact=openapi.Contact(email="contact@qa-app.local"),
-        license=openapi.License(name="MIT License"),
+        description="API documentation for KTL ISP Billing System",
+        terms_of_service="https://www.yourapp.com/terms/",
+        contact=openapi.Contact(email="contact@ktl.com"),
+        license=openapi.License(name="Your License"),
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),

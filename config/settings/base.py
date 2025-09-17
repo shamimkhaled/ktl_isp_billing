@@ -249,6 +249,7 @@ FILE_UPLOAD_PERMISSIONS = 0o644
 
 # API Documentation
 SWAGGER_SETTINGS = {
+    'USE_SESSION_AUTH': False,
     'SECURITY_DEFINITIONS': {
         'Bearer': {
             'type': 'apiKey',
@@ -256,8 +257,11 @@ SWAGGER_SETTINGS = {
             'in': 'header'
         }
     },
-    'USE_SESSION_AUTH': False,
-    'JSON_EDITOR': True,
+    'DEFAULT_INFO': {
+        'title': 'KTL ISP Billing API',
+        'version': 'v1',
+        'description': 'API documentation for KTL ISP Billing System',
+    },
 }
 
 

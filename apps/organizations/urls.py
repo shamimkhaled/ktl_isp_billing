@@ -1,7 +1,14 @@
-from django.urls import path
-from .views import OrganizationListCreateView, OrganizationDetailView
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import OrganizationViewSet
 
+# Create a router and register our viewsets with it
+router = DefaultRouter()
+router.register(r'organization', OrganizationViewSet, basename='organization')
+
+app_name = 'organizations'
+
+# The API URLs are now determined automatically by the router
 urlpatterns = [
-    path('organizations/', OrganizationListCreateView.as_view(), name='organization-list-create'),
-    path('organizations/<int:pk>/', OrganizationDetailView.as_view(), name='organization-detail'),
+    path('', include(router.urls)),
 ]
