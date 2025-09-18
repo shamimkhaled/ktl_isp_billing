@@ -89,7 +89,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     """
     API endpoint for organizations with caching and optimized queries
     """
-    queryset = Organizations.objects.all()
+    queryset = Organizations.objects.with_settings()
     serializer_class = OrganizationSerializer
     permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     pagination_class = CustomPageNumberPagination
@@ -99,27 +99,7 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'company_name', 'organization_type']
     ordering = ['-created_at']
 
-    def get_queryset(self):
-        """
-        Optimize queryset with select_related and prefetch_related
-        """
-        queryset = Organizations.objects.select_related(
-            'billing_settings',
-            'sync_settings'
-        ).prefetch_related(
-            Prefetch('billing_settings'),
-            Prefetch('sync_settings')
-        )
-        
-        # Cache expensive queries
-        cache_key = f'org_queryset_{self.action}'
-        cached_queryset = cache.get(cache_key)
-        
-        if cached_queryset is None:
-            cached_queryset = queryset
-            cache.set(cache_key, cached_queryset, timeout=300)  # 5 minutes cache
-            
-        return cached_queryset
+    
 
 
     @swagger_auto_schema(

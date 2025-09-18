@@ -165,25 +165,7 @@ class OrganizationSerializer(serializers.ModelSerializer):
         
         return instance
 
-    def to_representation(self, instance):
-        """Cached representation with select_related optimization"""
-        cache_key = f'organization_representation_{instance.pk}'
-        cached_data = cache.get(cache_key)
-        
-        if cached_data is None:
-            # Optimize query with select_related
-            instance = Organizations.objects.select_related(
-                'billing_settings', 
-                'sync_settings'
-            ).get(pk=instance.pk)
-            
-            data = super().to_representation(instance)
-            data['customer_id_prefix_code'] = instance.customer_id_prefix_code
-            
-            cache.set(cache_key, data, timeout=3600)
-            return data
-            
-        return cached_data
+    
 
 
 

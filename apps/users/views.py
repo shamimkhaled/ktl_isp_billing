@@ -56,7 +56,7 @@ class UserListCreateView(generics.ListCreateAPIView):
         role = self.request.query_params.get('role')
         if role:
             queryset = queryset.filter(user_roles__role__name=role, user_roles__is_active=True)
-        return queryset.prefetch_related('user_roles__role', 'groups__permissions')
+        return queryset.select_related('department', 'designation', 'district', 'thana').prefetch_related('user_roles__role', 'groups__permissions')
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -70,15 +70,12 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     queryset = User.objects.all()
 
-    def get_permissions(self):
-        """
-        Return different permissions based on the request method.
-        GET: All authenticated users can retrieve
-        PUT/PATCH/DELETE: Only super admin and admin can modify/delete
-        """
-        if self.request.method in ['PUT', 'PATCH', 'DELETE']:
-            return [permissions.IsAuthenticated(), IsSuperAdminOrAdmin()]
-        return [permissions.IsAuthenticated()]
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'department', 'designation', 'district', 'thana'
+        ).prefetch_related(
+            'user_roles__role', 'groups__permissions'
+        )
 
     def get_serializer_class(self):
         if self.request.method in ['PUT', 'PATCH']:
