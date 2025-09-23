@@ -22,7 +22,14 @@ def validate_login_id(value):
 class CustomUserManager(DjangoUserManager):
     """
     Custom user manager to handle user_type and initial role assignment.
+    Enhanced with performance optimizations.
     """
+    
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'department', 'designation', 'district', 'thana'
+        )
+    
     def _create_user(self, login_id, email, password, user_type, **extra_fields):
         if not email:
             raise ValueError('The given email must be set')
@@ -54,6 +61,21 @@ class CustomUserManager(DjangoUserManager):
         # Extract user_type from extra_fields to avoid duplicate parameter
         user_type = extra_fields.pop('user_type', 'super_admin')
         return self._create_user(login_id, email, password, user_type, **extra_fields)
+    
+    def active(self):
+        """Get active users"""
+        return self.filter(is_active=True)
+    
+    def by_type(self, user_type):
+        """Get users by type"""
+        return self.filter(user_type=user_type)
+    
+    def with_roles(self):
+        """Get users with their roles"""
+        return self.prefetch_related('user_roles__role')
+
+
+
 
 
 class Department(TimestampedModel):
@@ -64,41 +86,136 @@ class Department(TimestampedModel):
         (False, 'Inactive'),
     ]
     name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=20, default='dept', unique=True, db_index=True)
     description = models.TextField(blank=True)
     status = models.BooleanField(choices=status_choices, default=True)    
+
+    parent = models.ForeignKey(
+        'self', 
+        on_delete=models.CASCADE, 
+        blank=True, 
+        null=True, 
+        related_name='sub_departments'
+    )
+    head = models.ForeignKey(
+        'User', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True, 
+        related_name='headed_departments'
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    order = models.PositiveIntegerField(default=0)
+    
+    # Organization relationship (if multi-tenant)
+    organization = models.ForeignKey(
+        'organizations.Organizations',
+        on_delete=models.CASCADE,
+        related_name='departments',
+        blank=True,
+        null=True
+    )
 
     class Meta:
         db_table = 'departments'
         verbose_name = 'Department'
         verbose_name_plural = 'Departments'
-    
-    def __str__(self):
+        ordering = ['order', 'name']
+        indexes = [
+            models.Index(fields=['organization', 'is_active']),
+            models.Index(fields=['parent', 'is_active']),
+            models.Index(fields=['code', 'organization']),
+        ]
+        unique_together = ['code', 'organization']
+
+
+    @property
+    def full_name(self):
+        """Get full department path"""
+        if self.parent:
+            return f"{self.parent.name} > {self.name}"
         return self.name
+    
+    def get_all_users(self):
+        """Get all users in this department and sub-departments"""
+        department_ids = [self.id]
+        department_ids.extend(self.get_all_sub_department_ids())
+        return User.objects.filter(department_id__in=department_ids, is_active=True)
+    
+    def get_all_sub_department_ids(self):
+        """Get all sub-department IDs recursively"""
+        ids = []
+        for sub_dept in self.sub_departments.filter(is_active=True):
+            ids.append(sub_dept.id)
+            ids.extend(sub_dept.get_all_sub_department_ids())
+        return ids
     
 
 class Designation(TimestampedModel):
-    """Designation model for job titles."""
+    """Designation model for job titles with hierarchy."""
     
-    status_choices = [
-        (True, 'Active'),
-        (False, 'Inactive'),
+    DESIGNATION_LEVELS = [
+        (1, 'Entry Level'),
+        (2, 'Junior Level'),
+        (3, 'Mid Level'),
+        (4, 'Senior Level'),
+        (5, 'Lead Level'),
+        (6, 'Manager Level'),
+        (7, 'Director Level'),
+        (8, 'Executive Level')
     ]
-    name = models.CharField(max_length=100, unique=True)
+    
+    name = models.CharField(max_length=100, db_index=True)
+    code = models.CharField(max_length=20, default='designation', db_index=True)
     description = models.TextField(blank=True)
-    status = models.BooleanField(choices=status_choices, default=True)    
+    level = models.PositiveIntegerField(
+        choices=DESIGNATION_LEVELS, 
+        default=1,
+        db_index=True
+    )
+
+    department = models.ForeignKey(
+        Department, 
+        on_delete=models.CASCADE, 
+        related_name='designations',
+        blank=True,
+        null=True
+    )
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    
+    # Salary range
+    # min_salary = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    # max_salary = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    
+    # Organization relationship
+    organization = models.ForeignKey(
+        'organizations.Organizations',
+        on_delete=models.CASCADE,
+        related_name='designations',
+        blank=True,
+        null=True
+    )
 
     class Meta:
         db_table = 'designations'
         verbose_name = 'Designation'
         verbose_name_plural = 'Designations'
+        ordering = ['level', 'name']
+        indexes = [
+            models.Index(fields=['organization', 'is_active']),
+            models.Index(fields=['department', 'level']),
+            models.Index(fields=['level', 'is_active']),
+        ]
+        unique_together = ['code', 'organization']
     
     def __str__(self):
         return self.name
+
+    
     
 
 class User(AbstractUser, TimestampedModel):
-    """Custom user model for KTL billing system."""
-    
     USER_TYPES = [
         ('super_admin', 'Super Administrator'),
         ('admin', 'Administrator'),
@@ -108,6 +225,9 @@ class User(AbstractUser, TimestampedModel):
         ('reseller_admin', 'Reseller Administrator'),
         ('sub_reseller_admin', 'Sub-Reseller Administrator'),
         ('field_staff', 'Field Staff'),
+        ('accountant', 'Accountant'),
+        ('customer_service', 'Customer Service'),
+        ('technical_support', 'Technical Support'),
     ]
     
     # Authentication fields
@@ -119,23 +239,52 @@ class User(AbstractUser, TimestampedModel):
     )
     email = models.EmailField(unique=True)
     mobile = PhoneNumberField()
-    user_type = models.CharField(max_length=50, choices=USER_TYPES)
+    user_type = models.CharField(max_length=50, choices=USER_TYPES, db_index=True)
     
     # Personal Information
-    employee_id = models.CharField(max_length=50, blank=True, null=True)
-    name = models.CharField(max_length=150)
-    department = models.ForeignKey('Department', on_delete=models.SET_NULL, blank=True, null=True)
-    designation = models.ForeignKey('Designation', on_delete=models.SET_NULL, blank=True, null=True)
+    employee_id = models.CharField(max_length=50, blank=True, null=True, unique=True)
+    name = models.CharField(max_length=150, db_index=True)
+    department = models.ForeignKey(
+        'Department', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True,
+        related_name='users'
+    )
+    designation = models.ForeignKey(
+        'Designation', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True,
+        related_name='users'
+    )
+    
+    # Employment Details
     salary = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     date_of_joining = models.DateField(blank=True, null=True)
-    # date_of_birth = models.DateField(blank=True, null=True)
-    address = models.TextField(blank=True, null=True)
+    date_of_birth = models.DateField(blank=True, null=True)
     contact_person_name = models.CharField(max_length=150, blank=True, null=True)
     contact_person_phone = PhoneNumberField(blank=True, null=True)
-    district = models.ForeignKey('common.District', on_delete=models.SET_NULL, blank=True, null=True)
-    thana = models.ForeignKey('common.Thana', on_delete=models.SET_NULL, blank=True, null=True)
+    
+    # Address Information
+    address = models.TextField(blank=True, null=True)
+    district = models.ForeignKey(
+        'common.District', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True,
+        related_name='users'
+    )
+    thana = models.ForeignKey(
+        'common.Thana', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True,
+        related_name='users'
+    )
     postal_code = models.CharField(max_length=20, blank=True, null=True)
-
+    
+    # Additional Information
     remarks = models.TextField(blank=True, null=True)
 
 
@@ -147,6 +296,8 @@ class User(AbstractUser, TimestampedModel):
     # Security
     failed_login_attempts = models.PositiveIntegerField(default=0)
     locked_until = models.DateTimeField(blank=True, null=True)
+    password_changed_at = models.DateTimeField(blank=True, null=True)
+    password_expires_at = models.DateTimeField(blank=True, null=True)
     two_factor_enabled = models.BooleanField(default=False)
     two_factor_secret = models.CharField(max_length=32, blank=True, null=True)
     
@@ -175,16 +326,34 @@ class User(AbstractUser, TimestampedModel):
         default='Asia/Dhaka',
         help_text='User timezone preference'
     )
+
+
+    organization = models.ForeignKey(
+        'organizations.Organizations',
+        on_delete=models.CASCADE,
+        related_name='users',
+        blank=True,
+        null=True
+    )
     
     USERNAME_FIELD = 'login_id'
     REQUIRED_FIELDS = ['email', 'user_type']
 
     objects = CustomUserManager()
-
     class Meta:
         db_table = 'users'
         verbose_name = 'User'
         verbose_name_plural = 'Users'
+        indexes = [
+            models.Index(fields=['user_type', 'is_active']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['date_of_joining']),
+            models.Index(fields=['organization', 'user_type', 'is_active']),
+            models.Index(fields=['department', 'designation']),
+            models.Index(fields=['login_id', 'is_active']),
+            models.Index(fields=['email', 'is_active']),
+        ]
+        
     
     def __str__(self):
         return f"{self.name or self.get_full_name()} ({self.login_id})"
@@ -204,21 +373,12 @@ class User(AbstractUser, TimestampedModel):
         return self.user_roles.filter(role__name=role_name, is_active=True).exists()
     
     def get_all_permissions(self):
-        """Get all permissions from assigned roles and Django groups"""
         permissions = set()
-        
-        # Get permissions from roles
-        for user_role in self.user_roles.filter(is_active=True):
-            permissions.update(user_role.role.get_all_permissions())
-        
-        # Get permissions from Django groups
-        for group in self.groups.all():
-            permissions.update(group.permissions.values_list('codename', flat=True))
-        
-        # Get direct user permissions
-        permissions.update(self.user_permissions.values_list('codename', flat=True))
-        
+        for user_role in self.user_roles.filter(is_active=True):  # Query 1 per user
+            permissions.update(user_role.role.get_all_permissions())  # Query 2+ per role
+        # Additional queries for groups and direct permissions
         return list(permissions)
+
     
     def assign_role(self, role, assigned_by, **kwargs):
         """Assign a role to the user"""
@@ -283,12 +443,15 @@ class Role(TimestampedModel):
         null=True, 
         blank=True
     )
+
+
+
     
     # Additional role metadata
     is_system_role = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, db_index=True)
     max_assignments = models.PositiveIntegerField(blank=True, null=True)
-    role_level = models.PositiveIntegerField(default=1)  # 1=Super Admin, 2=Admin, etc.
+    role_level = models.PositiveIntegerField(default=1, db_index=True)  # 1=Super Admin, 2=Admin, etc.
     can_assign_roles = models.BooleanField(default=False)
     
     class Meta:
@@ -354,6 +517,10 @@ class UserRole(TimestampedModel):
         unique_together = ['user', 'role']  # Simplified for now
         verbose_name = 'User Role Assignment'
         verbose_name_plural = 'User Role Assignments'
+        indexes = [
+            models.Index(fields=['user', 'role', 'is_active']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self):
         return f"{self.user.full_name} - {self.role.display_name}"
