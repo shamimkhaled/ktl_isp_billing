@@ -1,12 +1,12 @@
 import uuid
 import re
 from django.db import models
-from django.utils import timezone
-from django.contrib.auth.models import AbstractUser, UserManager as DjangoUserManager, Group, Permission
+from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager, Group
 from django.core.validators import RegexValidator
 from django.core.exceptions import ValidationError
-from phonenumber_field.modelfields import PhoneNumberField
+from django.utils import timezone
 from apps.common.models import TimestampedModel
+from phonenumber_field.modelfields import PhoneNumberField
 
 
 def validate_login_id(value):
@@ -19,60 +19,177 @@ def validate_login_id(value):
         )
 
 
-class CustomUserManager(DjangoUserManager):
+
+class Role(TimestampedModel):
     """
-    Custom user manager to handle user_type and initial role assignment.
-    Enhanced with performance optimizations.
+    Role Model - Integrated with Django Groups
+    CRITICAL: Users MUST have a role before creation
     """
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text='Internal role name (lowercase_with_underscores)'
+    )
+    display_name = models.CharField(
+        max_length=150,
+        help_text='Human-readable role name'
+    )
+    description = models.TextField(blank=True)
     
-    def get_queryset(self):
-        return super().get_queryset().select_related(
-            'department', 'designation', 'district', 'thana'
-        )
+    # Django Group Integration (AUTO-CREATED)
+    django_group = models.OneToOneField(
+        Group,
+        on_delete=models.CASCADE,
+        related_name='ktl_role',
+        null=True,
+        blank=True,
+        help_text='Auto-linked Django Group for permissions'
+    )
     
-    def _create_user(self, login_id, email, password, user_type, **extra_fields):
-        if not email:
-            raise ValueError('The given email must be set')
+    # Organization
+    organization_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Organization this role belongs to'
+    )
+    
+    # Role properties
+    role_level = models.PositiveIntegerField(
+        default=100,
+        help_text='Hierarchy level (lower = more powerful). super_admin=1, admin=10, user=100'
+    )
+    is_system_role = models.BooleanField(
+        default=False,
+        help_text='System-managed role (cannot be deleted)'
+    )
+    is_active = models.BooleanField(default=True)
+    
+    # Role Capabilities
+    can_assign_roles = models.BooleanField(
+        default=False,
+        help_text='Can this role assign roles to other users'
+    )
+    max_users = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='Maximum users allowed with this role (null = unlimited)'
+    )
+    
+    # Dashboard Access
+    default_dashboard = models.CharField(
+        max_length=50,
+        default='dashboard',
+        help_text='Default landing page after login'
+    )
+    
+    class Meta:
+        db_table = 'roles'
+        verbose_name = 'Role'
+        verbose_name_plural = 'Roles'
+        unique_together = ['organization_id', 'name']
+        ordering = ['role_level', 'display_name']
+        indexes = [
+            models.Index(fields=['organization_id', 'is_active']),
+            models.Index(fields=['role_level']),
+        ]
+    
+    def __str__(self):
+        return f"{self.display_name} (Level {self.role_level})"
+    
+
+    def save(self, *args, **kwargs):
+        """ Auto create Django Group on save"""
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        if not self.django_group:
+           group_name = f"{self.organization_id}_{self.name}"
+           group, created = Group.objects.get_or_create(name=group_name)
+           self.django_group = group
+           super().save(update_fields=['django_group'])
+
+
+    def get_permissions(self):
+        """Get all permissions associated with this role"""
+        if self.django_group:
+            return list(self.django_group.permissions.values_list('codename', flat=True))
+        
+        return []
+    
+    def assign_permission(self, permission_codenames):
+        """Assign Django permissions link to this role"""
+        from django.contrib.auth.models import Permission
+        if self.django_group:
+            permissions = Permission.objects.filter(codename__in=permission_codenames)
+            self.django_group.permissions.add(*permissions)
+
+
+
+
+
+class CustomUserManager(BaseUserManager):
+    """Custom manager for User model"""
+    
+    def create_user(self, login_id, email, password=None, **extra_fields):
+        """
+        Create regular user
+        REQUIRES: role parameter
+        """
         if not login_id:
-            raise ValueError('The given login_id must be set')
+            raise ValueError('User must have a login_id')
+        if not email:
+            raise ValueError('User must have an email')
+        
+        # Validate role is provided
+        role = extra_fields.get('role')
+        if not role:
+            raise ValueError('User must be assigned a role before creation')
+        
         email = self.normalize_email(email)
-        # Ensure username is set to login_id to satisfy AbstractUser requirements
-        extra_fields.setdefault('username', login_id)
-        user = self.model(login_id=login_id, email=email, user_type=user_type, **extra_fields)
+        user = self.model(
+            login_id=login_id,
+            email=email,
+            **extra_fields
+        )
         user.set_password(password)
         user.save(using=self._db)
+        
+        # Add user to role's Django group
+        if role and role.django_group:
+            user.groups.add(role.django_group)
+        
         return user
-
-    def create_user(self, login_id, email, password=None, user_type='field_staff', **extra_fields):
-        extra_fields.setdefault('is_staff', False)
-        extra_fields.setdefault('is_superuser', False)
-        return self._create_user(login_id, email, password, user_type, **extra_fields)
-
+    
     def create_superuser(self, login_id, email, password=None, **extra_fields):
+        """
+        Create superuser with super_admin role
+        """
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('user_type', 'super_admin')
-
-        if extra_fields.get('is_staff') is not True:
-            raise ValueError('Superuser must have is_staff=True.')
-        if extra_fields.get('is_superuser') is not True:
-            raise ValueError('Superuser must have is_superuser=True.')
         
-        # Extract user_type from extra_fields to avoid duplicate parameter
-        user_type = extra_fields.pop('user_type', 'super_admin')
-        return self._create_user(login_id, email, password, user_type, **extra_fields)
-    
-    def active(self):
-        """Get active users"""
-        return self.filter(is_active=True)
-    
-    def by_type(self, user_type):
-        """Get users by type"""
-        return self.filter(user_type=user_type)
-    
-    def with_roles(self):
-        """Get users with their roles"""
-        return self.prefetch_related('user_roles__role')
+        # Find or create super_admin role
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT id FROM organizations LIMIT 1")
+            row = cursor.fetchone()
+            org_id = row[0] if row else uuid.uuid4()
+        
+        super_admin_role, created = Role.objects.get_or_create(
+            name='super_admin',
+            organization_id=org_id,
+            defaults={
+                'display_name': 'Super Administrator',
+                'role_level': 1,
+                'is_system_role': True,
+                'can_assign_roles': True
+            }
+        )
+        
+        extra_fields['role'] = super_admin_role
+        extra_fields['organization_id'] = org_id
+        
+        return self.create_user(login_id, email, password, **extra_fields)
 
 
 
@@ -215,20 +332,7 @@ class Designation(TimestampedModel):
     
     
 
-class User(AbstractUser, TimestampedModel):
-    USER_TYPES = [
-        ('super_admin', 'Super Administrator'),
-        ('admin', 'Administrator'),
-        ('billing_manager', 'Billing Manager'),
-        ('noc_manager', 'NOC Manager'),
-        ('support_staff', 'Support Staff'),
-        ('reseller_admin', 'Reseller Administrator'),
-        ('sub_reseller_admin', 'Sub-Reseller Administrator'),
-        ('field_staff', 'Field Staff'),
-        ('accountant', 'Accountant'),
-        ('customer_service', 'Customer Service'),
-        ('technical_support', 'Technical Support'),
-    ]
+class User(AbstractBaseUser, PermissionsMixin, TimestampedModel):
     
     # Authentication fields
     login_id = models.CharField(
@@ -239,8 +343,8 @@ class User(AbstractUser, TimestampedModel):
     )
     email = models.EmailField(unique=True)
     mobile = PhoneNumberField()
-    user_type = models.CharField(max_length=50, choices=USER_TYPES, db_index=True)
     
+
     # Personal Information
     employee_id = models.CharField(max_length=50, blank=True, null=True, unique=True)
     name = models.CharField(max_length=150, db_index=True)
@@ -287,8 +391,21 @@ class User(AbstractUser, TimestampedModel):
     # Additional Information
     remarks = models.TextField(blank=True, null=True)
 
+    # ROLE (REQUIRED - No user without role)
+    role = models.ForeignKey(
+        Role,
+        on_delete=models.PROTECT,
+        related_name='users',
+        null=True,
+        blank=True,
+        help_text='Primary role for this user (REQUIRED)'
+    )
+    
+
 
     # Account Status
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
     is_phone_verified = models.BooleanField(default=False)
     is_first_login = models.BooleanField(default=True)
@@ -337,7 +454,7 @@ class User(AbstractUser, TimestampedModel):
     )
     
     USERNAME_FIELD = 'login_id'
-    REQUIRED_FIELDS = ['email', 'user_type']
+    REQUIRED_FIELDS = ['email']
 
     objects = CustomUserManager()
     class Meta:
@@ -345,267 +462,174 @@ class User(AbstractUser, TimestampedModel):
         verbose_name = 'User'
         verbose_name_plural = 'Users'
         indexes = [
-            models.Index(fields=['user_type', 'is_active']),
-            models.Index(fields=['created_at']),
-            models.Index(fields=['date_of_joining']),
-            models.Index(fields=['organization', 'user_type', 'is_active']),
-            models.Index(fields=['department', 'designation']),
-            models.Index(fields=['login_id', 'is_active']),
-            models.Index(fields=['email', 'is_active']),
+            models.Index(fields=['organization_id']),
+            models.Index(fields=['email']),
+            models.Index(fields=['role']),
         ]
         
     
+  
     def __str__(self):
-        return f"{self.name or self.get_full_name()} ({self.login_id})"
+        return f"{self.name} ({self.login_id}) - {self.role.display_name}"
+    
+    def clean(self):
+        """Validate user has role and belongs to same organization as role"""
+        if not self.role:
+            raise ValidationError("User must have a role assigned")
 
+        if self.organization and self.role.organization_id != self.organization.id:
+            raise ValidationError("User and role must belong to same organization")
+    
     def save(self, *args, **kwargs):
-        # Ensure username is set to login_id to satisfy AbstractUser requirements
-        if not self.username and self.login_id:
-            self.username = self.login_id
+        """Auto-add user to role's Django group"""
+        is_new = self.pk is None
         super().save(*args, **kwargs)
-
-    @property
-    def full_name(self):
-        return self.name
+        
+        # Sync with Django groups
+        if self.role and self.role.django_group:
+            # Remove from all other groups first
+            self.groups.clear()
+            # Add to role's group
+            self.groups.add(self.role.django_group)
     
     def has_role(self, role_name):
-        """Check if user has a specific role"""
-        return self.user_roles.filter(role__name=role_name, is_active=True).exists()
+        """Check if user has specific role"""
+        return self.role.name == role_name
     
-    def get_all_permissions(self):
-        permissions = set()
-        for user_role in self.user_roles.filter(is_active=True):  # Query 1 per user
-            permissions.update(user_role.role.get_all_permissions())  # Query 2+ per role
-        # Additional queries for groups and direct permissions
-        return list(permissions)
-
+    def has_permission_level(self, required_level):
+        """Check if user's role level is sufficient"""
+        return self.role.role_level <= required_level
     
-    def assign_role(self, role, assigned_by, **kwargs):
-        """Assign a role to the user"""
-        user_role, created = UserRole.objects.get_or_create(
-            user=self,
-            role=role,
-            defaults={
-                'assigned_by': assigned_by,
-                **kwargs
-            }
-        )
-        return user_role, created
+    def is_super_admin(self):
+        """Check if user is super admin"""
+        return self.role.name == 'super_admin'
     
-    def revoke_role(self, role, revoked_by, reason=""):
-        """Revoke a role from the user"""
-        user_roles = self.user_roles.filter(role=role, is_active=True)
-        for user_role in user_roles:
-            user_role.is_active = False
-            user_role.revoked_by = revoked_by
-            user_role.revoked_at = timezone.now()
-            user_role.revocation_reason = reason
-            user_role.save()
-        return user_roles.count()
-    
-    def set_tokens(self, access_token, refresh_token, expires_at=None, remember_me=False):
-        """Set access and refresh tokens for the user"""
+    def set_tokens(self, access_token, refresh_token, expires_at):
+        """Store JWT tokens"""
         self.access_token = access_token
         self.refresh_token = refresh_token
-        self.token_created_at = timezone.now()
         self.token_expires_at = expires_at
-        self.remember_me = remember_me
-        self.save(update_fields=['access_token', 'refresh_token', 'token_created_at', 'token_expires_at', 'remember_me'])
+        self.save(update_fields=['access_token', 'refresh_token', 'token_expires_at'])
     
     def clear_tokens(self):
-        """Clear user tokens"""
+        """Clear stored tokens"""
         self.access_token = None
         self.refresh_token = None
-        self.token_created_at = None
         self.token_expires_at = None
-        self.remember_me = False
-        self.save(update_fields=['access_token', 'refresh_token', 'token_created_at', 'token_expires_at', 'remember_me'])
-    
-    def is_token_valid(self):
-        """Check if current token is valid"""
-        if not self.access_token or not self.token_expires_at:
-            return False
-        return timezone.now() < self.token_expires_at
+        self.save(update_fields=['access_token', 'refresh_token', 'token_expires_at'])
 
+    def assign_role(self, role, assigned_by=None, assignment_reason='', expires_at=None):
+        """Assign a role to the user by changing the role field"""
+        previous_role = self.role
+        self.role = role
+        self.save()
 
-class Role(TimestampedModel):
-    """User roles integrated with Django's Group and Permission system."""
-    
-    name = models.CharField(max_length=100, unique=True)
-    display_name = models.CharField(max_length=150)
-    description = models.TextField(blank=True)
-    
-    # Integration with Django's Group system
-    django_group = models.OneToOneField(
-        Group, 
-        on_delete=models.CASCADE, 
-        related_name='custom_role',
-        null=True, 
-        blank=True
-    )
+        # Log history
+        RoleAssignmentHistory.objects.create(
+            user=self,
+            previous_role=previous_role,
+            new_role=role,
+            changed_by=assigned_by,
+            reason=assignment_reason
+        )
 
+        return self.role, True
 
+    def revoke_role(self, role, revoked_by=None, reason=''):
+        """Revoke a role from the user by clearing the role field"""
+        if self.role == role:
+            previous_role = self.role
+            self.role = None
+            self.save()
 
-    
-    # Additional role metadata
-    is_system_role = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True, db_index=True)
-    max_assignments = models.PositiveIntegerField(blank=True, null=True)
-    role_level = models.PositiveIntegerField(default=1, db_index=True)  # 1=Super Admin, 2=Admin, etc.
-    can_assign_roles = models.BooleanField(default=False)
-    
-    class Meta:
-        db_table = 'roles'
-        verbose_name = 'Role'
-        verbose_name_plural = 'Roles'
-    
-    def __str__(self):
-        return self.display_name
-    
-    def save(self, *args, **kwargs):
-        """Auto-create Django Group when Role is created"""
-        if not self.django_group:
-            group, created = Group.objects.get_or_create(name=self.name)
-            self.django_group = group
-        super().save(*args, **kwargs)
-    
+            # Log history
+            RoleAssignmentHistory.objects.create(
+                user=self,
+                previous_role=previous_role,
+                new_role=None,
+                changed_by=revoked_by,
+                reason=reason
+            )
+            return 1
+        return 0
+
     def get_all_permissions(self):
-        """Get all permissions assigned to this role"""
-        if self.django_group:
-            return list(self.django_group.permissions.values_list('codename', flat=True))
-        return []
-    
-    def add_permission(self, permission):
-        """Add a permission to this role"""
-        if self.django_group and isinstance(permission, Permission):
-            self.django_group.permissions.add(permission)
-    
-    def remove_permission(self, permission):
-        """Remove a permission from this role"""
-        if self.django_group and isinstance(permission, Permission):
-            self.django_group.permissions.remove(permission)
-    
-    def set_permissions(self, permissions):
-        """Set all permissions for this role"""
-        if self.django_group:
-            self.django_group.permissions.set(permissions)
-
-
-class UserRole(TimestampedModel):
-    """User role assignments with scope and integration with Django Groups."""
-    
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_roles')
-    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_assignments')
-    
-    # Scope limitations (optional) - commented out as organizations models may not exist yet
-    # sdt_zone = models.ForeignKey('organizations.SDTZone', on_delete=models.CASCADE, blank=True, null=True)
-    # sdt = models.ForeignKey('organizations.SDT', on_delete=models.CASCADE, blank=True, null=True)
-    
-    # Assignment details
-    assigned_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='role_assignments_made')
-    assigned_at = models.DateTimeField(default=timezone.now)
-    expires_at = models.DateTimeField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    
-    assignment_reason = models.TextField(blank=True)
-    revocation_reason = models.TextField(blank=True)
-    revoked_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='role_revocations_made')
-    revoked_at = models.DateTimeField(blank=True, null=True)
-    
-    class Meta:
-        db_table = 'user_roles'
-        unique_together = ['user', 'role']  # Simplified for now
-        verbose_name = 'User Role Assignment'
-        verbose_name_plural = 'User Role Assignments'
-        indexes = [
-            models.Index(fields=['user', 'role', 'is_active']),
-            models.Index(fields=['created_at']),
-        ]
-    
-    def __str__(self):
-        return f"{self.user.full_name} - {self.role.display_name}"
-    
-    def save(self, *args, **kwargs):
-        """Auto-assign user to Django Group when role is assigned"""
-        super().save(*args, **kwargs)
-        if self.is_active and self.role.django_group:
-            self.user.groups.add(self.role.django_group)
-        elif not self.is_active and self.role.django_group:
-            self.user.groups.remove(self.role.django_group)
-    
-    def delete(self, *args, **kwargs):
-        """Remove user from Django Group when role assignment is deleted"""
-        if self.role.django_group:
-            self.user.groups.remove(self.role.django_group)
-        super().delete(*args, **kwargs)
+        """Get all permissions for the user from the assigned role"""
+        permissions = set()
+        if self.role and self.role.django_group:
+            permissions.update(self.role.django_group.permissions.values_list('codename', flat=True))
+        return list(permissions)
 
 
 class PermissionCategory(TimestampedModel):
-    """Categories for organizing permissions"""
-    
+    """
+    Permission Category for organizing permissions
+    """
     name = models.CharField(max_length=100, unique=True)
     display_name = models.CharField(max_length=150)
     description = models.TextField(blank=True)
-    icon = models.CharField(max_length=50, blank=True)  # For UI icons
+    icon = models.CharField(max_length=50, blank=True)
     order = models.PositiveIntegerField(default=0)
-    
+
     class Meta:
         db_table = 'permission_categories'
         verbose_name = 'Permission Category'
         verbose_name_plural = 'Permission Categories'
         ordering = ['order', 'name']
-    
+
     def __str__(self):
         return self.display_name
 
 
 class CustomPermission(TimestampedModel):
-    """Custom permissions beyond Django's default model permissions"""
-    
+    """
+    Custom Permission model
+    """
     codename = models.CharField(max_length=100, unique=True)
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    category = models.ForeignKey(
-        PermissionCategory, 
-        on_delete=models.CASCADE, 
-        related_name='custom_permissions',
-        null=True, 
-        blank=True
-    )
-    
-    # Integration with Django Permission
-    django_permission = models.OneToOneField(
-        Permission,
-        on_delete=models.CASCADE,
-        related_name='custom_permission',
-        null=True,
-        blank=True
-    )
-    
     is_system_permission = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
-    
+    django_permission = models.OneToOneField(
+        'auth.Permission',
+        on_delete=models.CASCADE,
+        related_name='custom_permission',
+        blank=True,
+        null=True
+    )
+    category = models.ForeignKey(
+        PermissionCategory,
+        on_delete=models.CASCADE,
+        related_name='custom_permissions',
+        blank=True,
+        null=True
+    )
+
     class Meta:
         db_table = 'custom_permissions'
         verbose_name = 'Custom Permission'
         verbose_name_plural = 'Custom Permissions'
-    
+
     def __str__(self):
         return self.name
-    
-    def save(self, *args, **kwargs):
-        """Auto-create Django Permission when CustomPermission is created"""
-        if not self.django_permission:
-            from django.contrib.contenttypes.models import ContentType
-            content_type = ContentType.objects.get_for_model(User)
-            permission, created = Permission.objects.get_or_create(
-                codename=self.codename,
-                defaults={
-                    'name': self.name,
-                    'content_type': content_type,
-                }
-            )
-            self.django_permission = permission
-        super().save(*args, **kwargs)
+
+
+
+class RoleAssignmentHistory(TimestampedModel):
+    """
+    Track role changes for audit purposes
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='role_history')
+    previous_role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, related_name='previous_assignments')
+    new_role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, related_name='new_assignments')
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='role_changes_made')
+    reason = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'role_assignment_history'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.login_id}: {self.previous_role} → {self.new_role}"
 
 

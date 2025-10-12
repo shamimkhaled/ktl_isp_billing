@@ -25,7 +25,7 @@ urlpatterns = [
     path('roles/bulk-assign/', views.bulk_role_assignment, name='bulk-role-assignment'),
     
     # User Role Assignments
-    path('user-roles/', views.UserRoleListView.as_view(), name='user-role-list'),
+    # path('user-roles/', views.UserRoleListView.as_view(), name='user-role-list'),
     
     # Permissions
     path('permissions/', views.PermissionListView.as_view(), name='permission-list'),

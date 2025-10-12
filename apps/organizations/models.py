@@ -2,7 +2,7 @@ import uuid
 from django.db import models
 from django.utils import timezone
 from apps.common.models import TimestampedModel
-from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from django.core.cache import cache
 
 class OrganizationManager(models.Manager):
@@ -21,9 +21,24 @@ class OrganizationManager(models.Manager):
         """Get organizations with their settings"""
         return self.select_related('billing_settings', 'sync_settings')
 
+
+
 class Organizations(TimestampedModel):
     company_name = models.CharField(max_length=255, default='Kloud Technologies Ltd')
-    company_code = models.CharField(max_length=20, unique=True, default='KTL', db_index=True)
+     # Primary identification
+    company_code = models.CharField(
+        max_length=20,
+        unique=True,
+        db_index=True,
+        default='KTL',
+        validators=[
+            RegexValidator(
+                regex=r'^[A-Z0-9_-]+$',
+                message='Organization code must contain only uppercase letters, numbers, underscores, and hyphens'
+            )
+        ],
+        help_text='Unique organization code (e.g., KTL, DHKRES01)'
+    )
 
     business_license = models.CharField(max_length=100, blank=True, null=True)
     vat_registration = models.CharField(max_length=100, blank=True, null=True)

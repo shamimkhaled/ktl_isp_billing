@@ -8,10 +8,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
+        ('users', '0001_initial'),
         ('auth', '0012_alter_user_first_name_max_length'),
         ('common', '0001_initial'),
         ('organizations', '0003_syncsettings_last_sync_status_and_more'),
-        ('users', '0002_user_language_preference_user_timezone'),
     ]
 
     operations = [

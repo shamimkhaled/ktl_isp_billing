@@ -6,7 +6,7 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
-from .models import User, Role, UserRole, PermissionCategory, CustomPermission
+from .models import User, RoleAssignmentHistory, Role, PermissionCategory, CustomPermission
 from apps.common.models import District, Thana
 from apps.common.serializers import DistrictSerializer, ThanaSerializer
 
@@ -67,14 +67,14 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = [
             'id', 'name', 'display_name', 'description', 'role_level',
-            'is_active', 'is_system_role', 'can_assign_roles', 'max_assignments',
+            'is_active', 'is_system_role', 'can_assign_roles', 'max_users',
             'permissions', 'permission_ids', 'users_count', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
     
     def get_users_count(self, obj):
         """Get count of active users with this role"""
-        return obj.user_assignments.filter(is_active=True).count()
+        return obj.users.filter(is_active=True).count()
     
     def create(self, validated_data):
         permission_ids = validated_data.pop('permission_ids', [])
@@ -97,19 +97,6 @@ class RoleSerializer(serializers.ModelSerializer):
         return instance
 
 
-class UserRoleSerializer(serializers.ModelSerializer):
-    """Serializer for UserRole model"""
-    
-    role_name = serializers.CharField(source='role.display_name', read_only=True)
-    assigned_by_name = serializers.CharField(source='assigned_by.name', read_only=True)
-    
-    class Meta:
-        model = UserRole
-        fields = [
-            'id', 'role', 'role_name', 'is_active', 'assigned_by', 'assigned_by_name',
-            'assigned_at', 'expires_at', 'assignment_reason', 'created_at'
-        ]
-        read_only_fields = ['assigned_at', 'created_at']
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -117,20 +104,19 @@ class UserCreateSerializer(serializers.ModelSerializer):
     
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password_confirm = serializers.CharField(write_only=True)
-    roles = serializers.ListField(
-        child=serializers.IntegerField(),
+    role = serializers.UUIDField(
         write_only=True,
-        required=False,
-        help_text="List of role IDs to assign to the user"
+        required=True,
+        help_text="Role ID to assign to the user"
     )
     
     class Meta:
         model = User
         fields = [
-            'login_id', 'email', 'password', 'password_confirm', 
-            'mobile', 'user_type', 'employee_id', 'name', 'designation', 'department', 
+            'login_id', 'email', 'password', 'password_confirm',
+            'mobile', 'employee_id', 'name', 'designation', 'department',
             'salary', 'date_of_joining', 'address', 'contact_person_name', 'contact_person_phone',
-            'district', 'thana', 'postal_code', 'remarks', 'roles'
+            'district', 'thana', 'postal_code', 'remarks', 'role'
         ]
     
     def validate_login_id(self, value):
@@ -147,17 +133,24 @@ class UserCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data.pop('password_confirm')
-        roles = validated_data.pop('roles', [])
         password = validated_data.pop('password')
-        
+
+        # Get role object from UUID
+        role_id = validated_data.pop('role')
+        role = Role.objects.get(id=role_id)
+        validated_data['role'] = role
+
+        # Set organization from role if not provided
+        if 'organization' not in validated_data:
+            from apps.organizations.models import Organizations
+            try:
+                org = Organizations.objects.get(id=role.organization_id)
+                validated_data['organization'] = org
+            except Organizations.DoesNotExist:
+                pass  # Leave as None if org not found
+
         user = User.objects.create_user(password=password, **validated_data)
-        
-        # Assign roles
-        if roles:
-            role_objects = Role.objects.filter(id__in=roles, is_active=True)
-            for role in role_objects:
-                user.assign_role(role, assigned_by=self.context['request'].user)
-        
+
         return user
 
 
@@ -165,8 +158,8 @@ class UserSerializer(serializers.ModelSerializer):
     """Serializer for User model (read/update)"""
     
     # full_name = serializers.ReadOnlyField()
-    roles = UserRoleSerializer(source='user_roles', many=True, read_only=True)
     permissions = serializers.SerializerMethodField()
+    role_info = RoleSerializer(source='role', read_only=True)
     district_info = DistrictSerializer(source='district', read_only=True)
     thana_info = ThanaSerializer(source='thana', read_only=True)
     
@@ -174,11 +167,11 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'login_id', 'email',  'name',
-            'mobile', 'user_type', 'employee_id', 'designation', 'department',
+            'mobile', 'employee_id', 'designation', 'department',
             'salary', 'date_of_joining', 'address', 'contact_person_name', 'contact_person_phone',
             'district', 'district_info', 'thana', 'thana_info', 'postal_code', 'remarks',
             'is_active', 'is_staff', 'is_email_verified', 'is_phone_verified',
-            'profile_photo', 'language_preference', 'timezone', 'roles', 'permissions',
+            'profile_photo', 'language_preference', 'timezone', 'role', 'role_info', 'permissions',
             'last_login', 'date_joined', 'access_token', 'refresh_token', 'created_at', 'updated_at'
         ]
         
@@ -286,8 +279,8 @@ class RoleAssignmentSerializer(serializers.Serializer):
                 assignment_reason=reason,
                 expires_at=expires_at
             )
-            return {'action': 'assigned', 'created': created, 'user_role': user_role}
-        
+            return {'action': 'assigned', 'created': created}
+
         elif action == 'revoke':
             count = user.revoke_role(role=role, revoked_by=assigned_by, reason=reason)
             return {'action': 'revoked', 'count': count}
@@ -313,9 +306,9 @@ class PermissionCategorySerializer(serializers.ModelSerializer):
 
 class CustomPermissionSerializer(serializers.ModelSerializer):
     """Serializer for Custom Permission"""
-    
+
     category_name = serializers.CharField(source='category.display_name', read_only=True)
-    
+
     class Meta:
         model = CustomPermission
         fields = [
@@ -323,12 +316,32 @@ class CustomPermissionSerializer(serializers.ModelSerializer):
             'is_active', 'is_system_permission', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
-    
+
     def validate_codename(self, value):
         """Validate codename uniqueness"""
         if CustomPermission.objects.filter(codename=value).exists():
             raise serializers.ValidationError("A permission with this codename already exists.")
         return value
+
+
+class RoleAssignmentHistorySerializer(serializers.ModelSerializer):
+    """Serializer for RoleAssignmentHistory model"""
+
+    user_info = UserSerializer(source='user', read_only=True)
+    previous_role_info = RoleSerializer(source='previous_role', read_only=True)
+    new_role_info = RoleSerializer(source='new_role', read_only=True)
+    changed_by_info = UserSerializer(source='changed_by', read_only=True)
+
+    class Meta:
+        model = RoleAssignmentHistory
+        fields = [
+            'id', 'user', 'user_info', 'previous_role', 'previous_role_info',
+            'new_role', 'new_role_info', 'changed_by', 'changed_by_info',
+            'reason', 'created_at'
+        ]
+        read_only_fields = ['created_at']
+
+
 
 
 # Authentication Serializers
@@ -486,7 +499,7 @@ class LogoutSerializer(serializers.Serializer):
 class UserLoginResponseSerializer(serializers.ModelSerializer):
     """Serializer for user login response data"""
     
-    roles = UserRoleSerializer(source='user_roles', many=True, read_only=True)
+    role = RoleSerializer(source='role', read_only=True)
     permissions = serializers.SerializerMethodField()
     district_info = DistrictSerializer(source='district', read_only=True)
     thana_info = ThanaSerializer(source='thana', read_only=True)
@@ -494,11 +507,11 @@ class UserLoginResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'login_id', 'email', 'name', 'mobile', 'user_type',
+            'id', 'login_id', 'email', 'name', 'mobile',
             'employee_id', 'designation', 'department', 'district_info', 'thana_info',
             'is_active', 'is_staff', 'is_superuser', 'is_email_verified', 'is_phone_verified',
             'is_first_login', 'profile_photo', 'language_preference', 'timezone',
-            'roles', 'permissions', 'last_login', 'date_joined'
+            'role', 'permissions', 'last_login', 'date_joined'
         ]
         read_only_fields = ['id', 'last_login', 'date_joined']
     

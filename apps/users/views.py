@@ -10,11 +10,11 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from .models import User, Role, UserRole, PermissionCategory, CustomPermission
+from .models import User, Role, PermissionCategory, CustomPermission, RoleAssignmentHistory
 from .permissions import IsSuperAdminOrAdmin
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
-    RoleSerializer, UserRoleSerializer, PasswordChangeSerializer,
+    RoleSerializer, RoleAssignmentHistorySerializer, PasswordChangeSerializer,
     RoleAssignmentSerializer, PermissionSerializer, GroupSerializer,
     PermissionCategorySerializer, CustomPermissionSerializer,
     LoginSerializer, TokenRefreshSerializer, LogoutSerializer, UserLoginResponseSerializer
@@ -55,8 +55,8 @@ class UserListCreateView(generics.ListCreateAPIView):
         # Add role filtering
         role = self.request.query_params.get('role')
         if role:
-            queryset = queryset.filter(user_roles__role__name=role, user_roles__is_active=True)
-        return queryset.select_related('department', 'designation', 'district', 'thana').prefetch_related('user_roles__role', 'groups__permissions')
+            queryset = queryset.filter(role__name=role)
+        return queryset.select_related('department', 'designation', 'district', 'thana', 'role').prefetch_related('groups__permissions')
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -72,9 +72,9 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'department', 'designation', 'district', 'thana'
+            'department', 'designation', 'district', 'thana', 'role'
         ).prefetch_related(
-            'user_roles__role', 'groups__permissions'
+            'groups__permissions'
         )
 
     def get_serializer_class(self):
@@ -168,21 +168,21 @@ class RoleAssignmentView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UserRoleListView(generics.ListAPIView):
+class RoleAssignmentHistoryListView(generics.ListAPIView):
     """
-    List user role assignments
-    
-    GET /api/user-roles/ - List all role assignments
-    GET /api/user-roles/?user={user_id} - List roles for specific user
-    GET /api/user-roles/?role={role_id} - List users with specific role
+    List role assignment history
+
+    GET /api/role-history/ - List all role assignment history
+    GET /api/role-history/?user={user_id} - List history for specific user
+    GET /api/role-history/?role={role_id} - List history for specific role
     """
-    queryset = UserRole.objects.all()
-    serializer_class = UserRoleSerializer
+    queryset = RoleAssignmentHistory.objects.all()
+    serializer_class = RoleAssignmentHistorySerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_active', 'user', 'role']
-    search_fields = ['user__login_id', 'user__email', 'role__name']
-    ordering_fields = ['assigned_at', 'expires_at']
-    ordering = ['-assigned_at']
+    filterset_fields = ['user', 'previous_role', 'new_role', 'changed_by']
+    search_fields = ['user__login_id', 'user__email', 'previous_role__name', 'new_role__name']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
 
 
 class PermissionListView(generics.ListAPIView):
@@ -317,7 +317,7 @@ def user_permissions(request):
             'user': user.login_id,
             'permissions': permissions,
             'grouped_permissions': grouped_permissions,
-            'roles': [ur.role.name for ur in user.user_roles.filter(is_active=True)]
+            'roles': [user.role.name] if user.role else []
         }
     })
 
