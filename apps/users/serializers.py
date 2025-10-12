@@ -499,7 +499,7 @@ class LogoutSerializer(serializers.Serializer):
 class UserLoginResponseSerializer(serializers.ModelSerializer):
     """Serializer for user login response data"""
     
-    role = RoleSerializer(source='role', read_only=True)
+    role = RoleSerializer(read_only=True)
     permissions = serializers.SerializerMethodField()
     district_info = DistrictSerializer(source='district', read_only=True)
     thana_info = ThanaSerializer(source='thana', read_only=True)
