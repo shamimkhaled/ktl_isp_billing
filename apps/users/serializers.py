@@ -172,11 +172,11 @@ class UserSerializer(serializers.ModelSerializer):
             'district', 'district_info', 'thana', 'thana_info', 'postal_code', 'remarks',
             'is_active', 'is_staff', 'is_email_verified', 'is_phone_verified',
             'profile_photo', 'language_preference', 'timezone', 'role', 'role_info', 'permissions',
-            'last_login', 'date_joined', 'access_token', 'refresh_token', 'created_at', 'updated_at'
+            'last_login', 'access_token', 'refresh_token', 'created_at', 'updated_at'
         ]
         
         read_only_fields = [
-            'id', 'login_id', 'last_login', 'date_joined', 'created_at', 'updated_at'
+            'id', 'login_id', 'last_login', 'created_at', 'updated_at'
         ]
     
     def get_permissions(self, obj):
@@ -511,9 +511,9 @@ class UserLoginResponseSerializer(serializers.ModelSerializer):
             'employee_id', 'designation', 'department', 'district_info', 'thana_info',
             'is_active', 'is_staff', 'is_superuser', 'is_email_verified', 'is_phone_verified',
             'is_first_login', 'profile_photo', 'language_preference', 'timezone',
-            'role', 'permissions', 'last_login', 'date_joined'
+            'role', 'permissions', 'last_login', 'created_at'
         ]
-        read_only_fields = ['id', 'last_login', 'date_joined']
+        read_only_fields = ['id', 'last_login', 'created_at']
     
     def get_permissions(self, obj):
         """Get all user permissions"""
