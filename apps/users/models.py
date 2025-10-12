@@ -504,12 +504,13 @@ class User(AbstractBaseUser, PermissionsMixin, TimestampedModel):
         """Check if user is super admin"""
         return self.role.name == 'super_admin'
     
-    def set_tokens(self, access_token, refresh_token, expires_at):
+    def set_tokens(self, access_token, refresh_token, expires_at, remember_me=False):
         """Store JWT tokens"""
         self.access_token = access_token
         self.refresh_token = refresh_token
         self.token_expires_at = expires_at
-        self.save(update_fields=['access_token', 'refresh_token', 'token_expires_at'])
+        self.remember_me = remember_me
+        self.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'remember_me'])
     
     def clear_tokens(self):
         """Clear stored tokens"""
